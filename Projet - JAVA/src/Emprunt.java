@@ -26,6 +26,11 @@ public class Emprunt {
         this.dateRetour = dateRetour;
     }
 
+    // Méthode ajoutée pour définir la date d'emprunt
+    public void setDateEmprunt(java.util.Date dateEmprunt) {
+        this.dateEmprunt = dateEmprunt;
+    }
+
     // Getters et setters
     public int getId() {
         return id;

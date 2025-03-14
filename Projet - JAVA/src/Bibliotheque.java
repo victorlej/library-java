@@ -7,7 +7,6 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -186,7 +185,6 @@ public class Bibliotheque {
             throw new Exception("Le livre n'est pas disponible.");
         }
 
-        // Transaction pour assurer la cohérence
         connection.setAutoCommit(false);
         try {
             // Mettre à jour le livre
@@ -211,9 +209,7 @@ public class Bibliotheque {
                 pstmt.executeUpdate();
             }
 
-            // Appliquer les changements en mémoire
             utilisateur.emprunterLivre(livre);
-
             connection.commit();
         } catch (Exception e) {
             connection.rollback();
@@ -228,10 +224,9 @@ public class Bibliotheque {
             throw new Exception("Ce livre n'était pas emprunté.");
         }
 
-        // Transaction pour assurer la cohérence
         connection.setAutoCommit(false);
         try {
-            // Mettre à jour le livre
+            // Rendre le livre disponible
             String sqlLivre = "UPDATE livres SET disponible = true WHERE id = ?";
             try (PreparedStatement pstmt = connection.prepareStatement(sqlLivre)) {
                 pstmt.setInt(1, livre.getId());
@@ -254,9 +249,7 @@ public class Bibliotheque {
                 pstmt.executeUpdate();
             }
 
-            // Appliquer les changements en mémoire
             utilisateur.rendreLivre(livre);
-
             connection.commit();
         } catch (Exception e) {
             connection.rollback();
@@ -266,13 +259,88 @@ public class Bibliotheque {
         }
     }
 
+    // Méthodes de suppression
+
+    public void supprimerLivre(Livre livre) throws SQLException {
+        // Vérifier si le livre a des emprunts en cours (excluant ainsi les emprunts terminés)
+        String checkEmpruntsSql = "SELECT COUNT(*) FROM emprunts WHERE livre_id = ? AND statut = 'EN_COURS'";
+        try (PreparedStatement pstmt = connection.prepareStatement(checkEmpruntsSql)) {
+            pstmt.setInt(1, livre.getId());
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next() && rs.getInt(1) > 0) {
+                throw new SQLException("Impossible de supprimer le livre car il est référencé par des emprunts en cours.");
+            }
+        }
+
+        // Maintenant, supprimer le livre
+        String sql = "DELETE FROM livres WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setInt(1, livre.getId());
+            pstmt.executeUpdate();
+            this.livres.remove(livre);
+        }
+    }
+
+    public void supprimerUtilisateur(Utilisateur utilisateur) throws SQLException {
+        // Supprimer d'abord les emprunts liés à cet utilisateur
+        String deleteEmpruntsSql = "DELETE FROM emprunts WHERE utilisateur_id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(deleteEmpruntsSql)) {
+            pstmt.setInt(1, utilisateur.getId());
+            pstmt.executeUpdate();
+        }
+
+        // Ensuite supprimer l'utilisateur
+        String sql = "DELETE FROM utilisateurs WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setInt(1, utilisateur.getId());
+            pstmt.executeUpdate();
+            this.utilisateurs.remove(utilisateur);
+        }
+    }
+
+    // Méthode pour récupérer les emprunts en retard (adaptée pour H2)
+    public List<Emprunt> getEmpruntsEnRetard() throws SQLException {
+        List<Emprunt> retards = new ArrayList<>();
+        String sql = "SELECT e.id, e.livre_id, e.utilisateur_id, e.date_emprunt, e.date_retour, " +
+                "l.titre, l.auteur, l.genre, l.disponible, " +
+                "u.nom, u.prenom, u.email, u.nb_emprunts " +
+                "FROM emprunts e " +
+                "JOIN livres l ON e.livre_id = l.id " +
+                "JOIN utilisateurs u ON e.utilisateur_id = u.id " +
+                "WHERE e.statut = 'EN_COURS' AND " +
+                "DATEDIFF('DAY', e.date_emprunt, CURRENT_TIMESTAMP) > 14";
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                Livre livre = new Livre(
+                        rs.getInt("livre_id"),
+                        rs.getString("titre"),
+                        rs.getString("auteur"),
+                        rs.getString("genre"),
+                        rs.getBoolean("disponible")
+                );
+                Utilisateur utilisateur = new Utilisateur(
+                        rs.getInt("utilisateur_id"),
+                        rs.getString("nom"),
+                        rs.getString("prenom"),
+                        rs.getString("email"),
+                        rs.getInt("nb_emprunts")
+                );
+                Emprunt emprunt = new Emprunt(livre, utilisateur);
+                emprunt.setId(id);
+                emprunt.setEtat(new EtatEnRetard());
+                emprunt.setDateEmprunt(rs.getTimestamp("date_emprunt"));
+                retards.add(emprunt);
+            }
+        }
+        return retards;
+    }
+
     // Export des livres en CSV
     public void exporterLivresCSV(String fichier) throws IOException {
         try (FileWriter writer = new FileWriter(fichier)) {
-            // En-tête
             writer.append("ID,Titre,Auteur,Genre,Disponible\n");
-
-            // Données
             for (Livre livre : livres) {
                 writer.append(String.valueOf(livre.getId())).append(",");
                 writer.append(livre.getTitre().replace(",", ";")).append(",");
@@ -283,7 +351,6 @@ public class Bibliotheque {
         }
     }
 
-    // Getters pour les listes
     public List<Livre> getLivres() {
         return livres;
     }
@@ -292,7 +359,6 @@ public class Bibliotheque {
         return utilisateurs;
     }
 
-    // Méthode pour fermer proprement les ressources
     public void fermer() {
         if (connection != null) {
             try {

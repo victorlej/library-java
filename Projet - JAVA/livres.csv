@@ -1,2 +1,4 @@
 ID,Titre,Auteur,Genre,Disponible
-1,salut,salut,Roman,false
+1,Bonjour,Bonjour,Roman,true
+2,Bonjour1,Bonjour1,Roman,true
+3,Bonjour2,Bonjour2,Roman,true
